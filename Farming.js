@@ -7,21 +7,19 @@
  * @author Yunt
  *
  * @help Use Farming farm plugin command to call out the menu on an event
- *
- * @param growtime
- * @desc Growtime
- * @default 0
- * 
  * @param Seed ID
- * @desc The id for all the seeds, seperate by a single space
+ * @desc ID for all the seeds, seperate by a single space
  * Should match the order of Crop ID
  * @default 11 12
  * 
  * @param Crop ID
- * @desc The id for all the seeds, seperate by a single space
+ * @desc ID for all the seeds, seperate by a single space
  * Should match the order of Seed ID
  * @default 13 14
  *  
+ * @param Fertilizer ID
+ * @desc The ID for Fertilizer
+ * @default 20
  * 
  */
 class Crop {
@@ -30,6 +28,8 @@ class Crop {
         this.stage = 0;
         this._eventID = eventId;
         this._mapID = mapId;
+        this.seedID = seedId;
+        this.cropID = cropId;
     }
     grow(){
         if (this.stage < this.MAX_STAGE)
@@ -45,6 +45,8 @@ class Crop {
 let params = PluginManager.parameters('Farming');
 let seedIds = String(params['Seed ID']).split(' ').map(x=>Number(x));
 let cropIds = String(params['Crop ID']).split(' ').map(x=>Number(x));
+let fertilizerId = String(params['Fertilizer ID']);
+
 (function(){
     // Fields
     let crops = [];
@@ -64,6 +66,41 @@ let cropIds = String(params['Crop ID']).split(' ').map(x=>Number(x));
             }
         }
     }
+    class Seed_Window extends Window_Command{
+        constructor(){
+            super();
+            this.initialize.apply(this, arguments);
+        }
+        initialize(x, y){
+            super.initialize(x, y, 240, this.fittingHeight(4));
+            this.refresh();
+        }
+        makeCommandList(){
+            for (let i=0; i<seedIds.length; i++){
+                this.addCommand($dataItems[seedIds[i]].name, null, 
+                                ($gameParty.numItems($dataItems[seedIds[i]]) > 0));
+            }
+        }
+        maxCols(){
+            return 2;
+        }
+        callOkHandler(){
+            super.callOkHandler();
+            let index = this.index();
+            activeEventId = $gameMap.eventIdXy($gamePlayer.x, $gamePlayer.y);
+            activeMapId = $gameMap._mapId;
+            if ($gameParty.numItems($dataItems[seedIds[index]]) > 0){
+                crops.push(new Crop(seedIds[index], cropIds[index],
+                                    activeEventId, activeMapId))
+                $gameParty.loseItem($dataItems[seedIds[index]], 1);             
+                $gameMessage.add('Planted ' + $dataItems[seedIds[index]].name);
+            } else{
+                $gameMessage.add('You do not have any seeds');
+            }
+            SceneManager.goto(Scene_Map);
+            console.log(crops);
+        }
+    }
     class Farming_Window extends Window_Command {
         constructor(){
             super();
@@ -72,14 +109,15 @@ let cropIds = String(params['Crop ID']).split(' ').map(x=>Number(x));
         initialize(x, y){
             super.initialize(x, y, 240, this.fittingHeight(4));
             this.refresh();
+            this.select(0);
             this.activate();
         }
         makeCommandList(){
             let hasCrop = (this.getCrop() >= 0);
-            this.addCommand('Plant', null, !hasCrop);
-            this.addCommand('Fertilize', null, hasCrop);
-            this.addCommand('Harvest', null, hasCrop);
-            this.addCommand('Status', null, true);
+            this.addCommand('Plant', 'plant', !hasCrop);
+            this.addCommand('Fertilize', 'fertilize', hasCrop && !crops[this.getCrop()].harvest());
+            this.addCommand('Harvest', 'harvest', hasCrop && crops[this.getCrop()].harvest());
+            this.addCommand('Status', 'status', true);
         }
         maxItems(){
             return 4;
@@ -92,47 +130,46 @@ let cropIds = String(params['Crop ID']).split(' ').map(x=>Number(x));
                     break;
                 case 1:
                     this.fertilize();
+                    SceneManager.goto(Scene_Map);
                     break;
                 case 2:
                     this.harvest();
+                    SceneManager.goto(Scene_Map);
                     break;
                 case 3:
                     this.status();
+                    SceneManager.goto(Scene_Map);
                     break;
             }
-            console.log(activeEventId, activeMapId);
             activeEventId = null;
             activeMapId = null;
-            SceneManager.goto(Scene_Map);
-            console.log(crops);
         }
         plant(){
-            crops.push(new Crop(11, 12, activeEventId, activeMapId))
-            $gameMessage.add('Planted');
+            this.callHandler('plant');
         }   
         fertilize(){
-            if (crops[this.getCrop()].harvest()){
-                $gameMessage.add('It is ready to be harvested');
-            }
-            else{
+            if ($gameParty.numItems($dataItems[fertilizerId]) > 0){
+                $gameParty.loseItem($dataItems[fertilizerId], 1);
                 crops[this.getCrop()].grow();
-                $gameMessage.add('Fertilized');
+                $gameMessage.add('Used 1 fertilizer (' + 
+                                $gameParty.numItems($dataItems[fertilizerId]) + 
+                                ' left)');
+            } else{
+                $gameMessage.add('You do not have any fertilizer');
             }
         }
         harvest(){
-            if (crops[this.getCrop()].harvest()){
-                crops.splice(this.getCrop(), 1);
-                $gameMessage.add('Harvest xx');
-            }
-            else{
-                $gameMessage.add('It is still growing');
-            }
+            $gameMessage.add('Harvest ' + 
+                                $dataItems[crops[this.getCrop()].cropID].name);
+            $gameParty.gainItem($dataItems[crops[this.getCrop()].cropID], 1);
+            crops.splice(this.getCrop(), 1);
         }
         status(){
             if (!(this.getCrop() >= 0)){
                 $gameMessage.add('We can plant something here');
             }else{
-                $gameMessage.add('It is growing: '+crops[this.getCrop()].stage+
+                $gameMessage.add($dataItems[crops[this.getCrop()].seedID].name + 
+                                 ' is growing here: '+crops[this.getCrop()].stage+
                                  '/'+crops[this.getCrop()].MAX_STAGE);
             }
         }
@@ -152,10 +189,19 @@ let cropIds = String(params['Crop ID']).split(' ').map(x=>Number(x));
         }
         create () {
             super.create();
-            this._cropsWindow = new Farming_Window();
-            this._cropsWindow.x = 0;
-            this._cropsWindow.y = 0;
+            this._cropsWindow = new Farming_Window(0,0);
+            this._seedWindow = new Seed_Window(240,0);
+            this._cropsWindow.setHandler('plant', this.plant.bind(this));
             this.addWindow(this._cropsWindow);
+            this.addWindow(this._seedWindow);
+            this._seedWindow.deactivate();
+            this._seedWindow.deselect();
+        }
+        plant(){
+            console.log('here');
+            this._cropsWindow.deselect();
+            this._seedWindow.activate();
+            this._seedWindow.select(0);
         }
         update () {
             super.update();
